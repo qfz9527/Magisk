@@ -1,39 +1,32 @@
 /* file.cpp - Contains all files related utilities
  */
 
+#include <sys/sendfile.h>
+#include <sys/mman.h>
+#include <linux/fs.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <libgen.h>
-#include <sys/sendfile.h>
-#include <sys/mman.h>
-#include <linux/fs.h>
 
-#include "magisk.h"
-#include "utils.h"
-#include "selinux.h"
+#include <utils.h>
+#include <selinux.h>
 
-const char **excl_list = nullptr;
+using namespace std;
 
-static int is_excl(const char *name) {
-	if (excl_list)
-		for (int i = 0; excl_list[i]; ++i)
-			if (strcmp(name, excl_list[i]) == 0)
-				return 1;
-	return 0;
-}
-
-int fd_getpath(int fd, char *path, size_t size) {
+ssize_t fd_path(int fd, char *path, size_t size) {
 	snprintf(path, size, "/proc/self/fd/%d", fd);
-	return xreadlink(path, path, size) == -1;
+	return xreadlink(path, path, size);
 }
 
-int fd_getpathat(int dirfd, const char *name, char *path, size_t size) {
-	if (fd_getpath(dirfd, path, size))
-		return 1;
-	snprintf(path, size, "%s/%s", path, name);
+int fd_pathat(int dirfd, const char *name, char *path, size_t size) {
+	ssize_t len = fd_path(dirfd, path, size);
+	if (len < 0)
+		return -1;
+	path[len] = '/';
+	strlcpy(&path[len + 1], name, size - len - 1);
 	return 0;
 }
 
@@ -58,7 +51,15 @@ int mkdirs(const char *pathname, mode_t mode) {
 	return 0;
 }
 
-void in_order_walk(int dirfd, void (*callback)(int, struct dirent*)) {
+static bool is_excl(initializer_list<const char *> excl, const char *name) {
+	for (auto item : excl)
+		if (strcmp(item, name) == 0)
+			return true;
+	return false;
+}
+
+static void post_order_walk(int dirfd, initializer_list<const char *> excl,
+		int (*fn)(int, struct dirent *)) {
 	struct dirent *entry;
 	int newfd;
 	DIR *dir = fdopendir(dirfd);
@@ -67,39 +68,35 @@ void in_order_walk(int dirfd, void (*callback)(int, struct dirent*)) {
 	while ((entry = xreaddir(dir))) {
 		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
 			continue;
-		if (is_excl(entry->d_name))
+		if (is_excl(excl, entry->d_name))
 			continue;
 		if (entry->d_type == DT_DIR) {
 			newfd = xopenat(dirfd, entry->d_name, O_RDONLY | O_CLOEXEC);
-			in_order_walk(newfd, callback);
+			post_order_walk(newfd, excl, fn);
 			close(newfd);
 		}
-		callback(dirfd, entry);
+		fn(dirfd, entry);
 	}
 }
 
-static void rm_cb(int dirfd, struct dirent *entry) {
-	switch (entry->d_type) {
-	case DT_DIR:
-		unlinkat(dirfd, entry->d_name, AT_REMOVEDIR);
-		break;
-	default:
-		unlinkat(dirfd, entry->d_name, 0);
-		break;
-	}
+static int remove_at(int dirfd, struct dirent *entry) {
+	return unlinkat(dirfd, entry->d_name, entry->d_type == DT_DIR ? AT_REMOVEDIR : 0);
 }
 
 void rm_rf(const char *path) {
-	int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-	if (fd >= 0) {
+	struct stat st;
+	if (lstat(path, &st) < 0)
+		return;
+	if (S_ISDIR(st.st_mode)) {
+		int fd = open(path, O_RDONLY | O_CLOEXEC);
 		frm_rf(fd);
 		close(fd);
 	}
 	remove(path);
 }
 
-void frm_rf(int dirfd) {
-	in_order_walk(dirfd, rm_cb);
+void frm_rf(int dirfd, initializer_list<const char *> excl) {
+	post_order_walk(dirfd, excl, remove_at);
 }
 
 /* This will only on the same file system */
@@ -135,8 +132,6 @@ void mv_dir(int src, int dest) {
 	dir = xfdopendir(src);
 	while ((entry = xreaddir(dir))) {
 		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-			continue;
-		if (is_excl(entry->d_name))
 			continue;
 		getattrat(src, entry->d_name, &a);
 		switch (entry->d_type) {
@@ -188,7 +183,7 @@ void cp_afc(const char *source, const char *destination) {
 	setattr(destination, &a);
 }
 
-void clone_dir(int src, int dest) {
+void clone_dir(int src, int dest, bool overwrite) {
 	struct dirent *entry;
 	DIR *dir;
 	int srcfd, destfd, newsrc, newdest;
@@ -199,7 +194,8 @@ void clone_dir(int src, int dest) {
 	while ((entry = xreaddir(dir))) {
 		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
 			continue;
-		if (is_excl(entry->d_name))
+		if (struct stat st; !overwrite &&
+				fstatat(dest, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0)
 			continue;
 		getattrat(src, entry->d_name, &a);
 		switch (entry->d_type) {
@@ -208,14 +204,14 @@ void clone_dir(int src, int dest) {
 			setattrat(dest, entry->d_name, &a);
 			newsrc = xopenat(src, entry->d_name, O_RDONLY | O_CLOEXEC);
 			newdest = xopenat(dest, entry->d_name, O_RDONLY | O_CLOEXEC);
-			clone_dir(newsrc, newdest);
+			clone_dir(newsrc, newdest, overwrite);
 			close(newsrc);
 			close(newdest);
 			break;
 		case DT_REG:
 			destfd = xopenat(dest, entry->d_name, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC);
 			srcfd = xopenat(src, entry->d_name, O_RDONLY | O_CLOEXEC);
-			xsendfile(destfd, srcfd, 0, a.st.st_size);
+			xsendfile(destfd, srcfd, nullptr, a.st.st_size);
 			fsetattr(destfd, &a);
 			close(destfd);
 			close(srcfd);
@@ -238,8 +234,6 @@ void link_dir(int src, int dest) {
 	dir = xfdopendir(src);
 	while ((entry = xreaddir(dir))) {
 		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-			continue;
-		if (is_excl(entry->d_name))
 			continue;
 		if (entry->d_type == DT_DIR) {
 			getattrat(src, entry->d_name, &a);
@@ -267,16 +261,21 @@ int getattr(const char *path, struct file_attr *a) {
 	return 0;
 }
 
-int getattrat(int dirfd, const char *pathname, struct file_attr *a) {
-	char path[PATH_MAX];
-	fd_getpathat(dirfd, pathname, path, sizeof(path));
+int getattrat(int dirfd, const char *name, struct file_attr *a) {
+	char path[4096];
+	fd_pathat(dirfd, name, path, sizeof(path));
 	return getattr(path, a);
 }
 
 int fgetattr(int fd, struct file_attr *a) {
-	char path[PATH_MAX];
-	fd_getpath(fd, path, sizeof(path));
-	return getattr(path, a);
+	if (xfstat(fd, &a->st) < 0)
+		return -1;
+	char *con;
+	if (fgetfilecon(fd, &con) < 0)
+		return -1;
+	strcpy(a->con, con);
+	freecon(con);
+	return 0;
 }
 
 int setattr(const char *path, struct file_attr *a) {
@@ -284,21 +283,25 @@ int setattr(const char *path, struct file_attr *a) {
 		return -1;
 	if (chown(path, a->st.st_uid, a->st.st_gid) < 0)
 		return -1;
-	if (strlen(a->con) && lsetfilecon(path, a->con) < 0)
+	if (a->con[0] && lsetfilecon(path, a->con) < 0)
 		return -1;
 	return 0;
 }
 
-int setattrat(int dirfd, const char *pathname, struct file_attr *a) {
-	char path[PATH_MAX];
-	fd_getpathat(dirfd, pathname, path, sizeof(path));
+int setattrat(int dirfd, const char *name, struct file_attr *a) {
+	char path[4096];
+	fd_pathat(dirfd, name, path, sizeof(path));
 	return setattr(path, a);
 }
 
 int fsetattr(int fd, struct file_attr *a) {
-	char path[PATH_MAX];
-	fd_getpath(fd, path, sizeof(path));
-	return setattr(path, a);
+	if (fchmod(fd, a->st.st_mode & 0777) < 0)
+		return -1;
+	if (fchown(fd, a->st.st_uid, a->st.st_gid) < 0)
+		return -1;
+	if (a->con[0] && fsetfilecon(fd, a->con) < 0)
+		return -1;
+	return 0;
 }
 
 void clone_attr(const char *source, const char *target) {
@@ -307,30 +310,24 @@ void clone_attr(const char *source, const char *target) {
 	setattr(target, &a);
 }
 
-void fclone_attr(const int sourcefd, const int targetfd) {
+void fclone_attr(int sourcefd, int targetfd) {
 	struct file_attr a;
 	fgetattr(sourcefd, &a);
 	fsetattr(targetfd, &a);
 }
 
-static void _mmap(int rw, const char *filename, void **buf, size_t *size) {
+void *__mmap(const char *filename, size_t *size, bool rw) {
 	struct stat st;
+	void *buf;
 	int fd = xopen(filename, (rw ? O_RDWR : O_RDONLY) | O_CLOEXEC);
 	fstat(fd, &st);
 	if (S_ISBLK(st.st_mode))
 		ioctl(fd, BLKGETSIZE64, size);
 	else
 		*size = st.st_size;
-	*buf = *size > 0 ? xmmap(nullptr, *size, PROT_READ | (rw ? PROT_WRITE : 0), MAP_SHARED, fd, 0) : nullptr;
+	buf = *size > 0 ? xmmap(nullptr, *size, PROT_READ | (rw ? PROT_WRITE : 0), MAP_SHARED, fd, 0) : nullptr;
 	close(fd);
-}
-
-void mmap_ro(const char *filename, void **buf, size_t *size) {
-	_mmap(0, filename, buf, size);
-}
-
-void mmap_rw(const char *filename, void **buf, size_t *size) {
-	_mmap(1, filename, buf, size);
+	return buf;
 }
 
 void fd_full_read(int fd, void **buf, size_t *size) {
@@ -352,60 +349,61 @@ void full_read(const char *filename, void **buf, size_t *size) {
 	close(fd);
 }
 
-void full_read_at(int dirfd, const char *filename, void **buf, size_t *size) {
-	int fd = xopenat(dirfd, filename, O_RDONLY | O_CLOEXEC);
-	if (fd < 0) {
-		*buf = nullptr;
-		*size = 0;
-		return;
-	}
-	fd_full_read(fd, buf, size);
-	close(fd);
-}
-
-void stream_full_read(int fd, void **buf, size_t *size) {
-	size_t cap = 1 << 20;
-	uint8_t tmp[1 << 20];
-	*buf = xmalloc(cap);
-	ssize_t read;
-	*size = 0;
-	while (1) {
-		read = xread(fd, tmp, sizeof(tmp));
-		if (read <= 0)
-			break;
-		if (*size + read > cap) {
-			cap *= 2;
-			*buf = realloc(*buf, cap);
-		}
-		memcpy((uint8_t *) *buf + *size, tmp, read);
-		*size += read;
-	}
-}
-
 void write_zero(int fd, size_t size) {
-	size_t pos = lseek(fd, 0, SEEK_CUR);
-	ftruncate(fd, pos + size);
-	lseek(fd, pos + size, SEEK_SET);
+	char buf[4096] = {0};
+	size_t len;
+	while (size > 0) {
+		len = sizeof(buf) > size ? size : sizeof(buf);
+		write(fd, buf, len);
+		size -= len;
+	}
 }
 
-int file_to_vector(const char *filename, Vector<CharArray> &arr) {
-	if (access(filename, R_OK) != 0)
-		return 1;
-	char *line = nullptr;
-	size_t len = 0;
-	ssize_t read;
-
-	FILE *fp = xfopen(filename, "re");
+void file_readline(const char *file, const function<bool (string_view)> &fn, bool trim) {
+	FILE *fp = xfopen(file, "re");
 	if (fp == nullptr)
-		return 1;
-
-	while ((read = getline(&line, &len, fp)) != -1) {
-		// Remove end newline
-		if (line[read - 1] == '\n')
-			line[read - 1] = '\0';
-		arr.push_back(line);
+		return;
+	size_t len = 1024;
+	char *buf = (char *) malloc(len);
+	char *start;
+	ssize_t read;
+	while ((read = getline(&buf, &len, fp)) >= 0) {
+		start = buf;
+		if (trim) {
+			while (read && (buf[read - 1] == '\n' || buf[read - 1] == ' '))
+				--read;
+			buf[read] = '\0';
+			while (*start == ' ')
+				++start;
+		}
+		if (!fn(start))
+			break;
 	}
 	fclose(fp);
-	free(line);
-	return 0;
+	free(buf);
+}
+
+void parse_prop_file(const char *file, const function<bool (string_view, string_view)> &fn) {
+	file_readline(file, [&](string_view line_view) -> bool {
+		char *line = (char *) line_view.data();
+		if (line[0] == '#')
+			return true;
+		char *eql = strchr(line, '=');
+		if (eql == nullptr || eql == line)
+			return true;
+		*eql = '\0';
+		return fn(line, eql + 1);
+	}, true);
+}
+
+void parse_mnt(const char *file, const function<bool (mntent*)> &fn) {
+	unique_ptr<FILE, decltype(&endmntent)> fp(setmntent(file, "re"), &endmntent);
+	if (fp) {
+		mntent mentry{};
+		char buf[4096];
+		while (getmntent_r(fp.get(), &mentry, buf, sizeof(buf))) {
+			if (!fn(&mentry))
+				break;
+		}
+	}
 }

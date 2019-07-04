@@ -26,8 +26,6 @@
  * SUCH DAMAGE.
  */
 
-#include "system_properties/prop_area.h"
-
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -40,6 +38,8 @@
 #include <new>
 
 #include <async_safe/log.h>
+
+#include "system_properties/prop_area.h"
 
 constexpr size_t PA_SIZE = 128 * 1024;
 constexpr uint32_t PROP_AREA_MAGIC = 0x504f5250;
@@ -383,7 +383,8 @@ bool prop_area::del(const char *name) {
   prop_bt* node = find_prop_bt(root_node(), name, false);
   if (!node)
     return false;
-  atomic_store_explicit(&node->prop, 0, memory_order_release);
+  uint_least32_t new_offset = 0;
+  atomic_store_explicit(&node->prop, new_offset, memory_order_release);
   return true;
 }
 

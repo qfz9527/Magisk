@@ -16,20 +16,26 @@
 #   public *;
 #}
 
-# BouncyCastle
--keep,allowoptimization class org.bouncycastle.jcajce.provider.asymmetric.rsa.**SHA1** { *; }
--keep,allowoptimization class org.bouncycastle.jcajce.provider.asymmetric.RSA** { *; }
--keep,allowoptimization class org.bouncycastle.jcajce.provider.digest.SHA1** { *; }
--dontwarn javax.naming.**
-
-# Snet extention
+# Snet
 -keepclassmembers class com.topjohnwu.magisk.utils.ISafetyNetHelper { *; }
--keepclassmembers class com.topjohnwu.magisk.utils.BootSigner { *; }
+-keep,allowobfuscation interface com.topjohnwu.magisk.utils.ISafetyNetHelper$Callback
+-keepclassmembers class * implements com.topjohnwu.magisk.utils.ISafetyNetHelper$Callback {
+  void onResponse(int);
+}
 
-# Fast Android Networking Library
--dontwarn okhttp3.**
+# Keep all fragment constructors
+-keepclassmembers class * extends androidx.fragment.app.Fragment {
+  public <init>(...);
+}
+
+# DelegateWorker
+-keep,allowobfuscation class * extends com.topjohnwu.magisk.model.worker.DelegateWorker
+
+# BootSigner
+-keepclassmembers class com.topjohnwu.signing.BootSigner { *; }
 
 # Strip logging
+-assumenosideeffects class timber.log.Timber.Tree { *; }
 -assumenosideeffects class com.topjohnwu.magisk.utils.Logger {
   public *** debug(...);
 }
@@ -37,4 +43,8 @@
 # Excessive obfuscation
 -repackageclasses 'a'
 -allowaccessmodification
--optimizationpasses 6
+
+# QOL
+-dontnote **
+-dontwarn com.caverock.androidsvg.**
+-dontwarn ru.noties.markwon.**

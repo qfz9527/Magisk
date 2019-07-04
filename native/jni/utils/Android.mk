@@ -4,11 +4,13 @@ include $(CLEAR_VARS)
 LOCAL_MODULE:= libutils
 LOCAL_C_INCLUDES := jni/include $(LIBUTILS)
 LOCAL_SRC_FILES := \
+	missing.cpp \
+	new.cpp \
 	file.cpp \
 	misc.cpp \
 	selinux.cpp \
 	logging.cpp \
-	xwrap.cpp \
-	CharArray.cpp
+	cpio.cpp \
+	xwrap.cpp
 
 include $(BUILD_STATIC_LIBRARY)

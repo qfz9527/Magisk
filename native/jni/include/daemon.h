@@ -1,13 +1,10 @@
-/* daemon.h - Utility functions for daemon-client communication
- */
+#pragma once
 
-#ifndef _DAEMON_H_
-#define _DAEMON_H_
-
-#include <stdbool.h>
 #include <pthread.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <string>
+#include <vector>
 
 // Commands require connecting to daemon
 enum {
@@ -19,9 +16,8 @@ enum {
 	LATE_START,
 	BOOT_COMPLETE,
 	MAGISKHIDE,
-	HIDE_CONNECT,
-	HANDSHAKE,
 	SQLITE_CMD,
+	BROADCAST_ACK,
 };
 
 // Return codes for daemon
@@ -34,20 +30,15 @@ enum {
 
 // daemon.c
 
-int connect_daemon();
+int connect_daemon(bool create = false);
 int switch_mnt_ns(int pid);
-
-// log_monitor.c
-
-extern bool log_daemon_started;
-int connect_log_daemon();
-bool start_log_daemon();
 
 // socket.c
 
 socklen_t setup_sockaddr(struct sockaddr_un *sun, const char *name);
 int create_rand_socket(struct sockaddr_un *sun);
 int socket_accept(int sockfd, int timeout);
+void get_client_cred(int fd, struct ucred *cred);
 int recv_fd(int sockfd);
 void send_fd(int sockfd, int fd);
 int read_int(int fd);
@@ -66,10 +57,19 @@ void write_key_token(int fd, const char *key, int tok);
  ***************/
 
 void unlock_blocks();
-void startup();
 void post_fs_data(int client);
 void late_start(int client);
 void boot_complete(int client);
+
+/*************
+ * Scripting *
+ *************/
+
+void exec_script(const char *script);
+void exec_common_script(const char *stage);
+void exec_module_script(const char *stage, const std::vector<std::string> &module_list);
+void migrate_img(const char *img);
+void install_apk(const char *apk);
 
 /**************
  * MagiskHide *
@@ -82,5 +82,10 @@ void magiskhide_handler(int client);
  *************/
 
 void su_daemon_handler(int client, struct ucred *credential);
+void broadcast_test();
 
-#endif
+extern int SDK_INT;
+extern bool RECOVERY_MODE;
+extern bool CONNECT_BROADCAST;
+
+#define APP_DATA_DIR (SDK_INT >= 24 ? "/data/user_de" : "/data/user")

@@ -1,36 +1,48 @@
-#ifndef MAGISK_HIDE_H
-#define MAGISK_HIDE_H
+#pragma once
 
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <string>
+#include <functional>
+#include <map>
+#include <set>
 
-#include "daemon.h"
-#include "Vector.h"
-#include "CharArray.h"
+#include <daemon.h>
 
-#define TERM_THREAD SIGUSR1
+#define SIGTERMTHRD SIGUSR1
 
-// Daemon entries
-int launch_magiskhide(int client);
+#define SAFETYNET_COMPONENT  "com.google.android.gms/.droidguard.DroidGuardService"
+#define SAFETYNET_PROCESS    "com.google.android.gms.unstable"
+#define SAFETYNET_PKG        "com.google.android.gms"
+#define MICROG_SAFETYNET     "org.microg.gms.droidguard"
+
+// CLI entries
+void launch_magiskhide(int client);
 int stop_magiskhide();
 int add_list(int client);
 int rm_list(int client);
 void ls_list(int client);
+[[noreturn]] void test_proc_monitor();
 
-// Process monitor
+// Process monitoring
 void proc_monitor();
+void update_uid_map();
 
 // Utility functions
-void manage_selinux();
-void hide_sensitive_props();
-void clean_magisk_props();
+void crawl_procfs(const std::function<bool (int)> &fn);
+void crawl_procfs(DIR *dir, const std::function<bool (int)> &fn);
 
-// List managements
-int add_list(const char *proc);
-bool init_list();
+// Hide policies
+void hide_daemon(int pid);
+void hide_unmount(int pid = getpid());
+void hide_sensitive_props();
 
 extern bool hide_enabled;
-extern pthread_mutex_t list_lock;
-extern Vector<CharArray> hide_list;
+extern pthread_mutex_t monitor_lock;
+extern std::set<std::pair<std::string, std::string>> hide_set;
 
 enum {
 	LAUNCH_MAGISKHIDE,
@@ -42,11 +54,9 @@ enum {
 };
 
 enum {
-	LOGCAT_DISABLED = DAEMON_LAST,
-	HIDE_IS_ENABLED,
+	HIDE_IS_ENABLED = DAEMON_LAST,
 	HIDE_NOT_ENABLED,
 	HIDE_ITEM_EXIST,
-	HIDE_ITEM_NOT_EXIST
+	HIDE_ITEM_NOT_EXIST,
+	HIDE_NO_NS
 };
-
-#endif

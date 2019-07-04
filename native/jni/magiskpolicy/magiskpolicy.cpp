@@ -5,12 +5,17 @@
 
 #include <stdio.h>
 #include <limits.h>
+#include <vector>
+#include <string>
+
+#include <logging.h>
+#include <utils.h>
+#include <flags.h>
 
 #include "sepolicy.h"
 #include "magiskpolicy.h"
-#include "magisk.h"
-#include "utils.h"
-#include "flags.h"
+
+using namespace std;
 
 static const char *type_msg_1 =
 "Type 1:\n"
@@ -81,14 +86,15 @@ static const char *type_msg_6 =
 
 [[noreturn]] static void usage(char *arg0) {
 	fprintf(stderr,
-		"MagiskPolicy v" xstr(MAGISK_VERSION) "(" xstr(MAGISK_VER_CODE) ") (by topjohnwu)\n\n"
+		FULL_VER(MagiskPolicy) "\n\n"
 		"Usage: %s [--options...] [policy statements...]\n"
 		"\n"
 		"Options:\n"
   		"   --help            show help message for policy statements\n"
 		"   --load FILE       load policies from FILE\n"
-		"   --compile-split   compile and load split cil policies\n"
-		"                     from system and vendor just like init\n"
+		"   --load-split      load from preloaded sepolicy or compile\n"
+		"                     split policies\n"
+		"   --compile-split   compile split cil policies\n"
 		"   --save FILE       save policies to FILE\n"
 		"   --live            directly apply sepolicy live\n"
 		"   --magisk          inject built-in rules for a minimal\n"
@@ -101,7 +107,7 @@ static const char *type_msg_6 =
 	exit(1);
 }
 
-static int parse_bracket(char *tok, char *&stmt, Vector<const char *> *vec) {
+static int parse_bracket(char *tok, char *&stmt, vector<const char *> *vec) {
 	if (tok == nullptr || tok[0] != '{') {
 		// Not in a bracket
 		vec->push_back(tok);
@@ -143,10 +149,10 @@ static int parse_pattern_1(int action, const char *action_str, char *stmt) {
 
 	int state = 0;
 	char *cur, *cls;
-	Vector<const char*> source, target, permission;
+	vector<const char*> source, target, permission;
 	while ((cur = strtok_r(nullptr, " ", &stmt)) != nullptr) {
 		if (cur[0] == '*') cur = ALL;
-		Vector<const char *> *vec;
+		vector<const char *> *vec;
 		switch (state) {
 			case 0:
 				vec = &source;
@@ -200,10 +206,10 @@ static int parse_pattern_2(int action, const char *action_str, char *stmt) {
 
 	int state = 0;
 	char *cur, *range;
-	Vector<const char *> source, target, classes;
+	vector<const char *> source, target, classes;
 	while ((cur = strtok_r(nullptr, " ", &stmt)) != nullptr) {
 		if (cur[0] == '*') cur = ALL;
-		Vector<const char *> *vec;
+		vector<const char *> *vec;
 		switch (state) {
 			case 0:
 				vec = &source;
@@ -216,7 +222,7 @@ static int parse_pattern_2(int action, const char *action_str, char *stmt) {
 				break;
 			case 3:
 				// Currently only support ioctl
-				if (strcmp(cur, "ioctl"))
+				if (strcmp(cur, "ioctl") != 0)
 					return 1;
 				vec = nullptr;
 				break;
@@ -262,7 +268,7 @@ static int parse_pattern_3(int action, const char *action_str, char* stmt) {
 	}
 
 	char *cur;
-	Vector<const char *> domains;
+	vector<const char *> domains;
 	while ((cur = strtok_r(nullptr, " {}", &stmt)) != nullptr) {
 		if (cur[0] == '*') cur = ALL;
 		domains.push_back(cur);
@@ -291,10 +297,10 @@ static int parse_pattern_4(int action, const char *action_str, char *stmt) {
 
 	int state = 0;
 	char *cur;
-	Vector<const char *> classes, attribute;
+	vector<const char *> classes, attribute;
 	while ((cur = strtok_r(nullptr, " ", &stmt)) != nullptr) {
 		if (cur[0] == '*') cur = ALL;
-		Vector<const char *> *vec;
+		vector<const char *> *vec;
 		switch (state) {
 			case 0:
 				vec = &classes;
@@ -409,7 +415,7 @@ static void parse_statement(char *statement) {
 	char *action, *remain;
 
 	// strtok will modify the origin string, duplicate the statement for error messages
-	CharArray orig(statement);
+	string orig(statement);
 
 	action = strtok_r(statement, " ", &remain);
 	if (remain == nullptr) remain = &action[strlen(action)];
@@ -455,6 +461,11 @@ int magiskpolicy_main(int argc, char *argv[]) {
 					return 1;
 				}
 				++i;
+			} else if (strcmp(argv[i] + 2, "load-split") == 0) {
+				if (load_split_cil()) {
+					fprintf(stderr, "Cannot load split cil\n");
+					return 1;
+				}
 			} else if (strcmp(argv[i] + 2, "compile-split") == 0) {
 				if (compile_split_cil()) {
 					fprintf(stderr, "Cannot compile split cil\n");
@@ -481,11 +492,11 @@ int magiskpolicy_main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	for (; i < argc; ++i)
-		parse_statement(argv[i]);
-
 	if (magisk)
 		sepol_magisk_rules();
+
+	for (; i < argc; ++i)
+		parse_statement(argv[i]);
 
 	if (live && dump_policydb(SELINUX_LOAD)) {
 		fprintf(stderr, "Cannot apply policy\n");

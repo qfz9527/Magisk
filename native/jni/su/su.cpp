@@ -21,12 +21,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include "magisk.h"
-#include "daemon.h"
-#include "utils.h"
+#include <daemon.h>
+#include <utils.h>
+#include <flags.h>
+
 #include "su.h"
 #include "pts.h"
-#include "flags.h"
 
 int quit_signals[] = { SIGALRM, SIGABRT, SIGHUP, SIGPIPE, SIGQUIT, SIGTERM, SIGINT, 0 };
 
@@ -34,7 +34,7 @@ static void usage(int status) {
 	FILE *stream = (status == EXIT_SUCCESS) ? stdout : stderr;
 
 	fprintf(stream,
-	"MagiskSU v" xstr(MAGISK_VERSION) "(" xstr(MAGISK_VER_CODE) ")\n\n"
+	FULL_VER(MagiskSU) "\n\n"
 	"Usage: su [options] [-] [user [argument...]]\n\n"
 	"Options:\n"
 	"  -c, --command COMMAND         pass COMMAND to the invoked shell\n"
@@ -81,7 +81,7 @@ static void sighandler(int sig) {
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = SIG_DFL;
 	for (int i = 0; quit_signals[i]; ++i) {
-		sigaction(quit_signals[i], &act, NULL);
+		sigaction(quit_signals[i], &act, nullptr);
 	}
 }
 
@@ -90,7 +90,7 @@ static void setup_sighandlers(void (*handler)(int)) {
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = handler;
 	for (int i = 0; quit_signals[i]; ++i) {
-		sigaction(quit_signals[i], &act, NULL);
+		sigaction(quit_signals[i], &act, nullptr);
 	}
 }
 
@@ -106,15 +106,15 @@ su_request::su_request()
 int su_client_main(int argc, char *argv[]) {
 	int c;
 	struct option long_opts[] = {
-			{ "command",                required_argument,  NULL, 'c' },
-			{ "help",                   no_argument,        NULL, 'h' },
-			{ "login",                  no_argument,        NULL, 'l' },
-			{ "preserve-environment",   no_argument,        NULL, 'p' },
-			{ "shell",                  required_argument,  NULL, 's' },
-			{ "version",                no_argument,        NULL, 'v' },
-			{ "context",                required_argument,  NULL, 'z' },
-			{ "mount-master",           no_argument,        NULL, 'M' },
-			{ NULL, 0, NULL, 0 },
+			{ "command",                required_argument,  nullptr, 'c' },
+			{ "help",                   no_argument,        nullptr, 'h' },
+			{ "login",                  no_argument,        nullptr, 'l' },
+			{ "preserve-environment",   no_argument,        nullptr, 'p' },
+			{ "shell",                  required_argument,  nullptr, 's' },
+			{ "version",                no_argument,        nullptr, 'v' },
+			{ "context",                required_argument,  nullptr, 'z' },
+			{ "mount-master",           no_argument,        nullptr, 'M' },
+			{ nullptr, 0, nullptr, 0 },
 	};
 
 	su_request su_req;
@@ -127,7 +127,7 @@ int su_client_main(int argc, char *argv[]) {
 			strcpy(argv[i], "-M");
 	}
 
-	while ((c = getopt_long(argc, argv, "c:hlmps:Vvuz:M", long_opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "c:hlmps:Vvuz:M", long_opts, nullptr)) != -1) {
 		switch (c) {
 			case 'c':
 				su_req.command = concat_commands(argc, argv);
@@ -150,7 +150,7 @@ int su_client_main(int argc, char *argv[]) {
 				printf("%d\n", MAGISK_VER_CODE);
 				exit(EXIT_SUCCESS);
 			case 'v':
-				printf("%s\n", xstr(MAGISK_VERSION) ":MAGISKSU (topjohnwu)");
+				printf("%s\n", MAGISK_VERSION ":MAGISKSU");
 				exit(EXIT_SUCCESS);
 			case 'z':
 				// Do nothing, placed here for legacy support :)
@@ -176,7 +176,7 @@ int su_client_main(int argc, char *argv[]) {
 		if (pw)
 			su_req.uid = pw->pw_uid;
 		else
-			su_req.uid = atoi(argv[optind]);
+			su_req.uid = parse_int(argv[optind]);
 		optind++;
 	}
 

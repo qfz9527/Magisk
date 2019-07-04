@@ -8,7 +8,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include "db.h"
+#include <db.h>
 
 #define DEFAULT_SHELL "/system/bin/sh"
 
@@ -23,19 +23,22 @@ public:
 	int count;             /* Just a count for debugging purpose */
 
 	/* These values should be guarded with internal lock */
-	struct db_settings cfg;
-	struct db_strings str;
-	struct su_access access;
+	db_settings cfg;
+	db_strings str;
+	su_access access;
 	struct stat mgr_st;
 
 	/* These should be guarded with global cache lock */
 	int ref;
-	int life;
+	time_t timestamp;
 
-	su_info(unsigned uid);
+	su_info(unsigned uid = 0);
 	~su_info();
 	void lock();
 	void unlock();
+	bool isFresh();
+	void newRef();
+	void deRef();
 
 private:
 	pthread_mutex_t _lock;  /* Internal lock */
@@ -57,16 +60,16 @@ struct su_request : public su_req_base {
 } __attribute__((packed));
 
 struct su_context {
-	struct su_info *info;
-	struct su_request req;
+	su_info *info;
+	su_request req;
 	pid_t pid;
 };
 
 // connect.c
 
-void app_log(struct su_context *ctx);
-void app_notify(struct su_context *ctx);
-void app_connect(const char *socket, struct su_info *info);
-void socket_send_request(int fd, struct su_info *info);
+void app_log(su_context *ctx);
+void app_notify(su_context *ctx);
+void app_connect(const char *socket, su_info *info);
+void socket_send_request(int fd, su_info *info);
 
 #endif

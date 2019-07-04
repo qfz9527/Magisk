@@ -1,92 +1,114 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-android-extensions'
+apply plugin: 'kotlin-kapt'
 
-def configProps = new Properties()
-def configPath = project.hasProperty('configPath') ? project.configPath : rootProject.file('config.prop')
-configProps.load(new FileInputStream(configPath))
+kapt {
+    correctErrorTypes = true
+    useBuildCache = true
+    mapDiagnosticLocations = true
+    javacOptions {
+        option("-Xmaxerrs", 1000)
+    }
+}
 
 android {
-    compileSdkVersion rootProject.ext.compileSdkVersion
-    buildToolsVersion rootProject.ext.buildToolsVersion
-
     defaultConfig {
-        applicationId "com.topjohnwu.magisk"
-        minSdkVersion 21
-        targetSdkVersion rootProject.ext.compileSdkVersion
-    }
-
-    signingConfigs {
-        config {
-            storeFile rootProject.file('release-key.jks')
-            storePassword configProps['keyStorePass']
-            keyAlias configProps['keyAlias']
-            keyPassword configProps['keyPass']
-        }
+        applicationId 'com.topjohnwu.magisk'
+        vectorDrawables.useSupportLibrary = true
+        multiDexEnabled true
+        versionName configProps['appVersion']
+        versionCode configProps['appVersionCode'] as Integer
     }
 
     buildTypes {
-        debug {
-            // If keystore exists, sign the APK with custom signature
-            if (signingConfigs.config.storeFile.exists())
-                signingConfig signingConfigs.config
-        }
         release {
             minifyEnabled true
             shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.config
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro', 'proguard-kotlin.pro'
         }
     }
 
-    flavorDimensions "mode"
-
-    productFlavors {
-        full {
-            versionName configProps['appVersion']
-            versionCode configProps['appVersionCode'] as Integer
-            javaCompileOptions {
-                annotationProcessorOptions {
-                    argument('butterknife.debuggable', 'false')
-                }
-            }
-        }
-        stub {
-            versionCode 1
-            versionName "stub"
-        }
+    dataBinding {
+        enabled = true
     }
 
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+    packagingOptions {
+        exclude '/META-INF/*.version'
+        exclude '/META-INF/*.kotlin_module'
+        exclude '/META-INF/rxkotlin.properties'
+        exclude '/androidsupportmultidexversion.txt'
+        exclude '/org/**'
+        exclude '/kotlin/**'
+        exclude '/kotlinx/**'
     }
-    dexOptions {
-        preDexLibraries true
-        javaMaxHeapSize "2g"
+
+    kotlinOptions {
+        jvmTarget = '1.8'
     }
-    lintOptions {
-        disable 'MissingTranslation'
-    }
+}
+
+androidExtensions {
+    experimental = true
 }
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
-    implementation 'androidx.core:core:1.0.1'
-    fullImplementation project(':utils')
-    fullImplementation 'com.amitshekhar.android:android-networking:1.0.2'
-    fullImplementation 'androidx.appcompat:appcompat:1.0.2'
-    fullImplementation "androidx.preference:preference:${rootProject.ext.androidXVersion}"
-    fullImplementation "androidx.recyclerview:recyclerview:${rootProject.ext.androidXVersion}"
-    fullImplementation "androidx.cardview:cardview:${rootProject.ext.androidXVersion}"
-    fullImplementation "com.google.android.material:material:${rootProject.ext.androidXVersion}"
-    fullImplementation 'com.github.topjohnwu:libsu:2.1.2'
-    fullImplementation 'com.atlassian.commonmark:commonmark:0.11.0'
-    fullImplementation 'org.kamranzafar:jtar:2.3'
+    implementation project(':net')
+    implementation project(':shared')
+    implementation project(':signing')
 
-    def butterKnifeVersion = '9.0.0-rc2'
-    if (properties.containsKey('android.injected.invoked.from.ide')) {
-        fullImplementation "com.jakewharton:butterknife-reflect:${butterKnifeVersion}"
-    } else {
-        fullImplementation "com.jakewharton:butterknife-runtime:${butterKnifeVersion}"
-        fullAnnotationProcessor "com.jakewharton:butterknife-compiler:${butterKnifeVersion}"
+    implementation 'com.github.topjohnwu:jtar:1.0.0'
+    implementation 'com.jakewharton.timber:timber:4.7.1'
+    implementation 'com.github.skoumalcz:teanity:0.3.3'
+    implementation 'com.ncapdevi:frag-nav:3.2.0'
+
+    def vMarkwon = '3.0.1'
+    implementation "ru.noties.markwon:core:${vMarkwon}"
+    implementation "ru.noties.markwon:html:${vMarkwon}"
+    implementation "ru.noties.markwon:image-svg:${vMarkwon}"
+
+    def vLibsu = '2.5.0'
+    implementation "com.github.topjohnwu.libsu:core:${vLibsu}"
+    implementation "com.github.topjohnwu.libsu:io:${vLibsu}"
+
+    def vKoin = "2.0.1"
+    implementation "org.koin:koin-core:${vKoin}"
+    implementation "org.koin:koin-android:${vKoin}"
+    implementation "org.koin:koin-androidx-viewmodel:${vKoin}"
+
+    def vRetrofit = "2.6.0"
+    implementation "com.squareup.retrofit2:retrofit:${vRetrofit}"
+    implementation "com.squareup.retrofit2:converter-moshi:${vRetrofit}"
+    implementation "com.squareup.retrofit2:adapter-rxjava2:${vRetrofit}"
+
+    def vOkHttp = "3.12.3"
+    implementation "com.squareup.okhttp3:okhttp:${vOkHttp}"
+    implementation "com.squareup.okhttp3:logging-interceptor:${vOkHttp}"
+
+    def vMoshi = "1.8.0"
+    implementation "com.squareup.moshi:moshi:${vMoshi}"
+
+    def vKotshi = "2.0.1"
+    implementation "se.ansman.kotshi:api:${vKotshi}"
+    kapt "se.ansman.kotshi:compiler:${vKotshi}"
+
+    modules {
+        module('androidx.room:room-runtime') {
+            replacedBy('com.github.topjohnwu:room-runtime')
+        }
     }
+    def vRoom = "2.1.0"
+    implementation "com.github.topjohnwu:room-runtime:${vRoom}"
+
+    implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
+    implementation 'androidx.browser:browser:1.0.0'
+    implementation 'androidx.preference:preference:1.0.0'
+    implementation 'androidx.recyclerview:recyclerview:1.1.0-alpha06'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'androidx.work:work-runtime:2.0.1'
+    implementation 'androidx.transition:transition:1.2.0-alpha01'
+    implementation 'androidx.multidex:multidex:2.0.1'
+    implementation 'com.google.android.material:material:1.1.0-alpha07'
 }
